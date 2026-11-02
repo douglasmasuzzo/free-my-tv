@@ -23,6 +23,7 @@ import android.view.Choreographer;
 import android.view.View;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -104,6 +105,9 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private final HomeData data;
     private final Recs recs;
     private final NowPlaying.Watch playing;
+    /** The latest technology headlines (the crypto quotes' replacement), rotated one per minute. */
+    private List<News.Story> techNews = new ArrayList<>();
+    private int techIndex;
     private final TextPaint fit = new TextPaint();
     private String playingCorner, playingBottom;
     private float playingCornerWidth, playingBottomWidth, cornerCap, bottomCap, cornerBase;
@@ -146,6 +150,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             data.refreshIfStale();
             recs.refreshIfStale();
             recs.prefetchAll();
+            if (Prefs.techNews() && techNews.size() > 1) techIndex = (techIndex + 1) % techNews.size();
             dirty = true;
             chromeDirty = true;
             prepareNext();
@@ -190,6 +195,19 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         recs.refreshIfStale();
         recs.prefetchAll();
         Photos.importInbox(getContext(), () -> { if (running) prepareNext(); });
+        if (Prefs.techNews()) {
+            worker.execute(() -> {
+                List<News.Story> t = News.tech(new File(getContext().getCacheDir(), "news.tsv"), System.currentTimeMillis());
+                handler.post(() -> {
+                    if (!running) return;
+                    techNews = t;
+                    techIndex = 0;
+                    chromeDirty = true;
+                    dirty = true;
+                    invalidate();
+                });
+            });
+        }
         prepareNext();
         handler.postDelayed(tick, 60_000);
         playing.start();
@@ -583,29 +601,17 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                 c.drawText(clock, right - ink.right, CLOCK_TOP * k - ink.top, cornerClock);
             }
 
-            // Compact prices under the clock, right-aligned.
+            // The latest technology headline under the clock, right-aligned (what's playing takes its place).
             float base = (CLOCK_TOP + Ui.cap(cornerClock) / k + QUOTES_GAP) * k;
-            float cap = Ui.cap(cornerQuote), gap = 7 * k, spacing = 26 * k;
-            int[] coins = HomeData.active();
-            int n = playingCorner != null ? 0 : HomeData.coinCount();   // what an app is playing takes their place
-            if (playingCorner != null) c.drawText(playingCorner, right - playingCornerWidth, base, cornerQuote);
-            String[] values = new String[n];
-            float[] glyphs = new float[n];
-            float total = spacing * (n - 1);
-            for (int i = 0; i < n; i++) {
-                values[i] = HomeData.compact(data.prices[coins[i]]);
-                glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
-                total += glyphs[i] + gap + cornerQuote.measureText(values[i]);
+            if (playingCorner != null) {
+                c.drawText(playingCorner, right - playingCornerWidth, base, cornerQuote);
+            } else if (Prefs.techNews() && !techNews.isEmpty()) {
+                News.Story story = techNews.get(Math.floorMod(techIndex, techNews.size()));
+                fit.set(cornerQuote);
+                String line = TextUtils.ellipsize(story.source + " · " + story.title, fit, (RIGHT - 60) * k,
+                        TextUtils.TruncateAt.END).toString();
+                c.drawText(line, right - cornerQuote.measureText(line), base, cornerQuote);
             }
-            float qx = right - total;
-            for (int i = 0; i < n; i++) {
-                Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], qx + glyphs[i] / 2, base - cap / 2, cap, 0xA6FFFFFF);
-                qx += glyphs[i] + gap;
-                c.drawText(values[i], qx, base, cornerQuote);
-                qx += cornerQuote.measureText(values[i]) + spacing;
-            }
-            String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
-            if (!stale.isEmpty() && n > 0) c.drawText(stale, right - total - 24 * k - cornerStale.measureText(stale), base, cornerStale);
         } finally {
             chrome.endRecording();
         }
@@ -856,35 +862,17 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             c.drawText(range, x, base, weatherDim);
         }
 
-        // Prices near the bottom edge: small white logo + value, all four on one line.
-        float cap = Ui.cap(quotePaint), spacing = 56 * k, gap = 10 * k;
-        int[] coins = HomeData.active();
-        String[] values = new String[playingBottom != null ? 0 : HomeData.coinCount()];
-        float total = spacing * (values.length - 1);
+        // The latest technology headline near the bottom edge (what's playing takes its place).
+        float base = h - 92 * k;
         if (playingBottom != null) {
             float bars = NowPlaying.barsWidth(bottomCap) + bottomCap * 0.6f;
-            c.drawText(playingBottom, cx - (bars + playingBottomWidth) / 2 + bars, h - 92 * k, quotePaint);
-        }
-        for (int i = 0; i < values.length; i++) {
-            values[i] = HomeData.price(data.prices[coins[i]]);
-            total += Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap) + gap + quotePaint.measureText(values[i]);
-        }
-        float x = cx - total / 2, base = h - 92 * k;
-        for (int i = 0; i < values.length; i++) {
-            float gw = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
-            Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], x + gw / 2, base - cap / 2, cap, 0x80FFFFFF);
-            x += gw + gap;
-            c.drawText(values[i], x, base, quotePaint);
-            x += quotePaint.measureText(values[i]) + spacing;
-        }
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
-        if (!stale.isEmpty() && values.length > 0) {
-            if (!stale.equals(staleFor) || Ui.generation != staleGeneration) {
-                staleLine = Ui.trf("prices from {ago}", "ago", stale);
-                staleFor = stale;
-                staleGeneration = Ui.generation;
-            }
-            c.drawText(staleLine, cx, base + 38 * k, stalePaint);
+            c.drawText(playingBottom, cx - (bars + playingBottomWidth) / 2 + bars, base, quotePaint);
+        } else if (Prefs.techNews() && !techNews.isEmpty()) {
+            News.Story story = techNews.get(Math.floorMod(techIndex, techNews.size()));
+            fit.set(quotePaint);
+            String line = TextUtils.ellipsize(story.source + " · " + story.title, fit, (w - 160 * k),
+                    TextUtils.TruncateAt.END).toString();
+            c.drawText(line, cx - quotePaint.measureText(line) / 2, base, quotePaint);
         }
     }
 }

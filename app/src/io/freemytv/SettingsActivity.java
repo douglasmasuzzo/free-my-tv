@@ -176,7 +176,7 @@ public class SettingsActivity extends Activity {
         private int pickFor, pickCurrent, pickScroll;   // pickFor: the remote button (index + 1)
         private float touchX, touchY;
         private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_SLEEP = -2, PICK_PLACE = -3, PICK_PHOTOS = -4,
-                PICK_ALBUM = -5;
+                PICK_ALBUM = -5, PICK_THEME = -6;
         /**
          * The pickers from PICK_SLEEP down (Sleep Timer's, then My Photos' with Immich): their choices as {value, name},
          * and the value now.
@@ -925,6 +925,8 @@ public class SettingsActivity extends Activity {
                                 openPhotoSources();
                             } else if (screen == PICKER && pickFor == PICK_PHOTOS) {
                                 showSettingsRow(PHOTOS_ROW);
+                            } else if (screen == PICKER && pickFor == PICK_THEME) {
+                                showSettingsRow(2);
                             } else if (screen == PICKER && pickFor <= PICK_SLEEP) {
                                 focus = powerFocus(pickFor == PICK_SLEEP ? P_SLEEP : P_WHERE);
                                 pickScroll = 0;   // the picker's scroll isn't this short list's
@@ -967,25 +969,21 @@ public class SettingsActivity extends Activity {
 
         // MARK: - Home Settings and Remote Buttons
 
-        private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"},
+        private static final String[] UNITS = {"auto", "C", "F"}, THEMES = Theme.MODES,
                 CLOCKS = {"auto", "24", "12"};
         /** Home Settings: language, temperature, theme, clock, my photos, sounds, top of the screen, picks, Continue
          *  Watching's apps, watch from the screensaver, Android apps, status icons, Recent Apps, weather, city, forecast,
-         *  now playing, Home Assistant (only on builds with its address), quotes, one row per coin, then the TMDB and Watchmode keys and
-         *  updates (the last row). */
+         *  now playing, Home Assistant (only on builds with its address), technology news, then the TMDB and Watchmode
+         *  keys and updates (the last row). */
         private static final int CLOCK_ROW = 3, PHOTOS_ROW = 4, TOP_ROW = 6, PICKS_ROW = 7, WATCH_ROW = 8,
                 SAVER_ROW = 9, ANDROID_APPS_ROW = 10, STATUS_ICONS_ROW = 11, RECENTS_ROW = 12, POWER_ON_ROW = 13,
                 WEATHER_ROW = 14, CITY_ROW = 15, FORECAST_ROW = 16, PLAYING_ROW = 17, HOME_ROW = Config.HOME_ASSISTANT ? 18 : -1,
-                QUOTES_ROW = Config.HOME_ASSISTANT ? 19 : 18, COIN_ROWS = QUOTES_ROW + 1;
+                TECH_ROW = Config.HOME_ASSISTANT ? 19 : 18;
         /** No "home" on Xiaomi TVs: their remote sends one Home press as a burst of presses (HomeView.BURST_MS). */
         private static final String[] RECENTS = RemoteKeys.XIAOMI ? new String[] {"off", "drawer"}
                 : new String[] {"off", "drawer", "home"};
         /** Home Settings rows on screen at once (what fits above the hints at 1080p); a longer list scrolls. */
         private static final int SETTINGS_VISIBLE = 10;
-
-        private boolean dollar() {
-            return "BRL".equals(Place.currency());
-        }
 
         private String[] settingLabels() {
             List<String> l = new ArrayList<>();
@@ -1008,18 +1006,14 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Forecast"));
             l.add(Ui.tr("Now Playing widget"));
             if (HOME_ROW >= 0) l.add("Home Assistant");
-            l.add(Ui.tr("Quotes widget"));
-            l.add("Bitcoin");
-            l.add("Ethereum");
-            l.add("Solana");
-            if (dollar()) l.add(Ui.tr("Dollar"));
+            l.add(Ui.tr("Technology news"));
             l.add(Ui.tr("TMDB key"));
             l.add(Ui.tr("Watchmode key"));
             l.add(Ui.tr("Updates"));
             return l.toArray(new String[0]);
         }
 
-        /** The Updates row: the last one, after the coins and the keys. */
+        /** The Updates row: the last one, after the keys. */
         private int updatesRow() {
             return settingLabels().length - 1;
         }
@@ -1091,7 +1085,7 @@ public class SettingsActivity extends Activity {
             String unit = Prefs.temperature();
             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("unit|Automatic");
             String theme = Prefs.theme();
-            v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
+            v[2] = HomeApps.themeName(theme);
             int photos = Photos.files(getContext()).size();
             v[PHOTOS_ROW] = photos == 0 ? Ui.tr("photos|None")
                     : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos) : Ui.tr("Off");
@@ -1103,6 +1097,7 @@ public class SettingsActivity extends Activity {
             v[SAVER_ROW] = onOff(Prefs.saverWatch());
             String top = Prefs.topContent();
             v[TOP_ROW] = top.equals(Prefs.TOP_CONTINUE) ? Ui.tr("Continue Watching")
+                    : top.equals(Prefs.TOP_NEWS) ? Ui.tr("News")
                     : top.equals(Prefs.TOP_NONE) ? Ui.tr("Clock")
                     : Ui.tr("Picks");
             v[WATCH_ROW] = watchCount();
@@ -1117,9 +1112,7 @@ public class SettingsActivity extends Activity {
             v[FORECAST_ROW] = Prefs.forecast().equals("days") ? Ui.tr("Next days") : Ui.tr("Next hours");
             v[PLAYING_ROW] = onOff(Prefs.nowPlaying());
             if (HOME_ROW >= 0) v[HOME_ROW] = onOff(HomeAssistant.on(getContext()));
-            v[QUOTES_ROW] = onOff(Prefs.quotes());
-            // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
-            for (int i = COIN_ROWS; i < v.length - 3; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
+            v[TECH_ROW] = onOff(Prefs.techNews());
             v[v.length - 3] = keyValue(Recs.key());
             v[v.length - 2] = keyValue(Recs.watchmodeKey());
             v[v.length - 1] = updatesValue();
@@ -1173,9 +1166,7 @@ public class SettingsActivity extends Activity {
                 whyScroll = pickScroll;
                 for (int r = 0; r < n; r++) {
                     String need = need(r);
-                    whyRows[r] = screen == HOME_SETTINGS && pickScroll + r >= COIN_ROWS && pickScroll + r < keyRow() && !Prefs.quotes()
-                            ? Ui.tr("Turn on the Quotes widget to pick its coins.")
-                            : need == null ? null : Capabilities.missing(getContext(), need);
+                    whyRows[r] = need == null ? null : Capabilities.missing(getContext(), need);
                 }
             }
             return whyRows[i];
@@ -1264,6 +1255,24 @@ public class SettingsActivity extends Activity {
             choices.addAll(list);
             choiceNow = now;
             openPicker(which);
+        }
+
+        /** OK on Theme: the four fixed looks, or the fixed daily schedule. */
+        private void openTheme() {
+            List<String[]> list = new ArrayList<>();
+            list.add(new String[] {Theme.AUTO, Ui.tr("Automatic")});
+            list.add(new String[] {Theme.LIGHT, Ui.tr("Light")});
+            list.add(new String[] {Theme.SUNSET, Ui.tr("Sunset")});
+            list.add(new String[] {Theme.DARK, Ui.tr("Dark")});
+            list.add(new String[] {Theme.SCHEDULE, Ui.tr("Schedule")});
+            openChoices(PICK_THEME, list, Prefs.theme());
+        }
+
+        /** OK in the Theme picker: applied; the schedule is the fixed 05:30 / 12:00 / 18:00 / 22:00 day. */
+        private void pickTheme() {
+            Prefs.setTheme(choices.get(pickScroll + focus)[0]);
+            SleepOverlay.update(getContext());   // the pill's glass follows
+            showSettingsRow(2);
         }
 
         /** OK in a Sleep Timer picker: applied, and back to its row. */
@@ -1485,10 +1494,9 @@ public class SettingsActivity extends Activity {
                     Prefs.setHomeAssistant(!Prefs.homeAssistant());
                     if (!Prefs.homeAssistant()) HomeAssistant.forget(getContext());
                     return;
-                case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
+                case TECH_ROW: Prefs.setTechNews(!Prefs.techNews()); break;
                 default:
-                    if (row >= keyRow() || !Prefs.quotes()) return;   // the keys and Updates act on OK only
-                    Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
+                    if (row >= keyRow()) return;   // the keys and Updates act on OK only
                     break;
             }
             HomeData.get(getContext()).settingsChanged();
@@ -2218,6 +2226,7 @@ public class SettingsActivity extends Activity {
                     : pickFor == PICK_LANGUAGE ? Ui.tr("Language")
                     : pickFor == PICK_SLEEP ? Ui.tr("Sleep Timer") : pickFor == PICK_PLACE ? Ui.tr("Position")
                     : pickFor == PICK_PHOTOS ? Ui.tr("My Photos") : pickFor == PICK_ALBUM ? Ui.tr("Immich albums")
+                    : pickFor == PICK_THEME ? Ui.tr("Theme")
                     : keyLabels()[pickFor - 1];
             c.drawText(title, LIST_X * k + 30 * k, (LIST_TOP - 24) * k, heading);
             int rows = rowCount();
@@ -2367,6 +2376,8 @@ public class SettingsActivity extends Activity {
                 showSettingsRow(CITY_ROW);
             } else if (screen == PICKER && (pickFor == PICK_PHOTOS || pickFor == PICK_ALBUM)) {
                 pickPhotoSource();
+            } else if (screen == PICKER && pickFor == PICK_THEME) {
+                pickTheme();
             } else if (screen == PICKER && pickFor <= PICK_SLEEP) {
                 pickPower();
             } else if (screen == PICKER && pickFor == PICK_LANGUAGE) {
@@ -2396,6 +2407,8 @@ public class SettingsActivity extends Activity {
                 openPicker(focus + 1);
             } else if (screen == HOME_SETTINGS && pickScroll + focus == 0) {
                 openPicker(PICK_LANGUAGE);
+            } else if (screen == HOME_SETTINGS && pickScroll + focus == 2) {
+                openTheme();
             } else if (screen == HOME_SETTINGS && pickScroll + focus == CITY_ROW) {
                 askCity();
                 return;

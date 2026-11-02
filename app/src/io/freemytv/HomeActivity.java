@@ -3,12 +3,16 @@ package io.freemytv;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.WindowManager;
 import android.widget.TextView;
 
 /**
@@ -53,6 +57,58 @@ public class HomeActivity extends Activity {
 
     private boolean resumed, keyPressed;
 
+    /**
+     * Late night (the fixed schedule's 22:00–05:29): the screen dimmer and the sound lower, so the room stays dark. The
+     * window's own brightness is used (no system setting is written); the volume goes back to what it was after 05:29.
+     */
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private AudioManager audio;
+    private boolean lateComfort;
+    private int volumeBefore = -1;
+    private static final float LATE_BRIGHTNESS = 0.22f, LATE_VOLUME = 0.2f;
+
+    private final Runnable lateCheck = new Runnable() {
+        @Override public void run() {
+            applyLateComfort();
+            handler.postDelayed(this, 60_000);
+        }
+    };
+
+    private void applyLateComfort() {
+        boolean late = HomeData.get(this).isLate(System.currentTimeMillis());
+        if (late == lateComfort && (!late || getWindow().getAttributes().screenBrightness == LATE_BRIGHTNESS)) return;
+        lateComfort = late;
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (late) {
+            lp.screenBrightness = LATE_BRIGHTNESS;
+            if (audio == null) audio = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (audio != null) {
+                int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int now = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                int low = Math.max(1, Math.round(max * LATE_VOLUME));
+                if (now > low) {
+                    volumeBefore = now;
+                    try {
+                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, low, 0);
+                    } catch (RuntimeException e) {
+                        AppLog.w("late night: can't lower the volume: " + e.getMessage());
+                    }
+                }
+            }
+        } else {
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+            if (audio != null && volumeBefore >= 0) {
+                try {
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, volumeBefore, 0);
+                } catch (RuntimeException e) {
+                    AppLog.w("late night: can't restore the volume: " + e.getMessage());
+                }
+                volumeBefore = -1;
+            }
+        }
+        getWindow().setAttributes(lp);
+    }
+
     /** Live TV, unless a key came first or something else is in front by then. */
     private final Runnable powerOnLive = () -> {
         if (!resumed || keyPressed) return;
@@ -74,11 +130,15 @@ public class HomeActivity extends Activity {
             return;
         }
         if (home != null) home.resume();
+        applyLateComfort();   // the window's brightness is forgotten while another app is in front
+        handler.removeCallbacks(lateCheck);
+        handler.postDelayed(lateCheck, 60_000);
         Updates.tellOnce(this);   // an update the week's check got ready: said once
     }
 
     @Override protected void onPause() {
         resumed = false;
+        handler.removeCallbacks(lateCheck);
         if (home != null) home.pause();
         super.onPause();
     }
@@ -103,6 +163,7 @@ public class HomeActivity extends Activity {
     private static final long TWICE_MS = 700;
 
     @Override protected void onDestroy() {
+        handler.removeCallbacks(lateCheck);
         if (home != null) {
             home.removeCallbacks(powerOnLive);
             home.destroy();

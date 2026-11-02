@@ -251,13 +251,13 @@ final class Prefs {
         put("servicesOff", list.length() > 1 ? list.substring(1, list.length() - 1) : "");
     }
 
-    /** "auto" (dark from sunset to sunrise), "light" or "dark". */
+    /** "auto" (the sun), "light", "sunset", "dark" or "schedule" (the fixed 05:30 / 12:00 / 18:00 / 22:00 day). */
     static String theme() {
         String v = sp().getString("theme", Config.THEME.trim());
-        return v.equals("light") || v.equals("dark") ? v : "auto";
+        return Theme.normalize(v);
     }
 
-    static void setTheme(String v) { put("theme", v); }
+    static void setTheme(String v) { put("theme", Theme.normalize(v)); }
 
     /** Wi-Fi/Ethernet, Bluetooth and USB icons at the top-left of the home screen. */
     static boolean statusIcons() { return sp().getBoolean("statusicons", false); }
@@ -284,13 +284,14 @@ final class Prefs {
 
     // MARK: - Top of the home screen
 
-    static final String TOP_PICKS = "picks", TOP_CONTINUE = "continue", TOP_NONE = "none";
-    static final String[] TOP_CONTENT = {TOP_PICKS, TOP_CONTINUE, TOP_NONE};
+    static final String TOP_PICKS = "picks", TOP_CONTINUE = "continue", TOP_NEWS = "news", TOP_NONE = "none";
+    static final String[] TOP_CONTENT = {TOP_PICKS, TOP_CONTINUE, TOP_NEWS, TOP_NONE};
 
-    /** What the cards under the title show: the recommendations (TMDB), what you were watching in your apps, or nothing. */
+    /** What the cards under the title show: the recommendations (TMDB), what you were watching in your apps, the day's
+     *  headlines, or nothing. */
     static String topContent() {
         String v = sp().getString("topContent", TOP_PICKS);
-        return v.equals(TOP_CONTINUE) || v.equals(TOP_NONE) ? v : TOP_PICKS;
+        return v.equals(TOP_CONTINUE) || v.equals(TOP_NEWS) || v.equals(TOP_NONE) ? v : TOP_PICKS;
     }
 
     static void setTopContent(String v) { put("topContent", v); }
@@ -343,8 +344,15 @@ final class Prefs {
     static boolean homeAssistant() { return sp().getBoolean("homeAssistant", false); }
     static void setHomeAssistant(boolean on) { put("homeAssistant", on); }
 
-    static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
-    static void setQuotes(boolean on) { put("quotes", on); }
+    /**
+     * Technology headlines in the ticker and the drawer (the crypto quotes' replacement). The old "quotes" key is kept
+     * so an existing setup carries over without asking again.
+     */
+    static boolean techNews() { return sp().getBoolean("quotes", true); }
+    static void setTechNews(boolean on) { put("quotes", on); }
+
+    /** The old crypto quotes, off and with no UI: kept only so an old setting can't turn its network reads back on. */
+    static boolean crypto() { return sp().getBoolean("crypto", false); }
 
     /** Your photos (Photos, sent from a computer) on the screensaver and behind the home screen, once imported. */
     static boolean photos() { return sp().getBoolean("photos", true); }

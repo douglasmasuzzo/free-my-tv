@@ -62,6 +62,8 @@ final class HomeApps {
     static final int RECENTS = 8;
     /** A Home Assistant entity in the drawer (HomeAssistant): OK calls its service, nothing opens. */
     static final int HOME_ASSISTANT = 9;
+    /** The quick Theme switch at the top right: OK cycles automatic, light, dark and the schedule (the home screen). */
+    static final int THEME = 10;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -184,7 +186,11 @@ final class HomeApps {
     static List<Item> shelf(Context c, boolean extract) {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
+        // The game console (PlayStation, Xbox, Switch) keeps the shelf's last slot: it is the one card that isn't an
+        // app, and its name and icon come from the TV's own HDMI input (Settings > Shelf can't list it).
+        Item console = consoleInput(c);
         int max = maxShelf(c);
+        if (console != null) max = ConsoleShelf.appsWithConsole(max);
         for (String pkg : shelfPackages(c)) {
             if (items.size() >= max) break;
             Intent launch = launchIntent(pm, pkg);
@@ -210,7 +216,37 @@ final class HomeApps {
             }
             items.add(it);
         }
+        if (console != null) {
+            // A stable key (the port may change): the card is cached by it, and the shelf compares keys to redraw.
+            console.key = "console";
+            console.setTile(symbolTile(c, "console", console.symbol));
+            items.add(console);
+        }
         return items;
+    }
+
+    /** The HDMI input a game console is on, from the name the TV gives it ("Console de jogos", "PlayStation 5"), or null. */
+    static Item consoleInput(Context c) {
+        try {
+            return consoleIn(inputs(c, true));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The first input whose name says it is a game console (deviceSymbol), or null. */
+    static Item consoleIn(List<Item> inputs) {
+        List<String> symbols = new ArrayList<>(inputs.size());
+        for (Item it : inputs) symbols.add(it.symbol);
+        int i = ConsoleShelf.consoleIndex(symbols);
+        return i < 0 ? null : inputs.get(i);
+    }
+
+    /** The shelf's packages in order, leaving out cards that aren't apps (the console tile), for saving a new order. */
+    static List<String> packagesOf(List<Item> items) {
+        List<String> pkgs = new ArrayList<>(items.size());
+        for (Item it : items) pkgs.add(it.pkg);
+        return ConsoleShelf.packages(pkgs);
     }
 
     private static String[] known(String pkg) {
@@ -260,10 +296,11 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings", TOP_RECENTS = "recents", TOP_STORE = "store";
+    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings", TOP_RECENTS = "recents", TOP_STORE = "store",
+            TOP_THEME = "theme";
     static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS));
-    /** What can be a top button: the default three, and Recent Apps and App Store for whoever adds them. */
-    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS, TOP_RECENTS, TOP_STORE));
+    /** What can be a top button: the default three, and Recent Apps, App Store and Theme for whoever adds them. */
+    static final List<String> TOP_ALL = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS, TOP_RECENTS, TOP_STORE, TOP_THEME));
     static final int MAX_TOP = TOP_ALL.size();
 
     /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Settings). */
@@ -307,8 +344,27 @@ final class HomeApps {
             case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
             case TOP_RECENTS: return action(RECENTS, TOP_RECENTS, Ui.tr("Recent Apps"), "recents");
             case TOP_STORE: return action(APP, TOP_STORE, Ui.tr("App Store"), "store");
+            case TOP_THEME: return action(THEME, TOP_THEME, Ui.tr("Theme"), themeSymbol(Prefs.theme()));
             default: return action(SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");
         }
+    }
+
+    /** The Theme button's icon: what the screen is set to (a sun, a sunset, a moon, or a bulb on automatic). */
+    static String themeSymbol(String mode) {
+        if (Theme.LIGHT.equals(mode)) return "sunny";
+        if (Theme.SUNSET.equals(mode)) return "sunset";
+        if (Theme.DARK.equals(mode)) return "clear_night";
+        if (Theme.SCHEDULE.equals(mode)) return "bedtime";
+        return "lightbulb";
+    }
+
+    /** The Theme row's value and the quick switch's toast: Automatic, Light, Sunset, Dark, or the fixed schedule. */
+    static String themeName(String mode) {
+        if (Theme.LIGHT.equals(mode)) return Ui.tr("Light");
+        if (Theme.SUNSET.equals(mode)) return Ui.tr("Sunset");
+        if (Theme.DARK.equals(mode)) return Ui.tr("Dark");
+        if (Theme.SCHEDULE.equals(mode)) return Ui.tr("Schedule");
+        return Ui.tr("Automatic");
     }
 
     /** What can go in the top buttons, as {key, name}. */

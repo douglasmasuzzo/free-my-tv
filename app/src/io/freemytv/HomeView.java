@@ -54,6 +54,7 @@ import android.view.accessibility.AccessibilityNodeProvider;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -338,6 +339,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint rowTitle, drawerLabel, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp, dayLow;
     private Paint pricePaint, changePaint, sheetTitle;
     private TextPaint titlePaint, gridLabel, toastPaint;
+    /** The source's name on a news card (white, centered). */
+    private final TextPaint newsPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
     private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -963,6 +966,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetTitle.setTextAlign(Paint.Align.CENTER);
         gridLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, 0x99FFFFFF));
         gridLabel.setTextAlign(Paint.Align.CENTER);
+        newsPaint.set(Ui.text(Ui.semibold, 42 * k, 0xF2FFFFFF));
+        newsPaint.setTextAlign(Paint.Align.CENTER);
         toastPaint = new TextPaint(Ui.text(Ui.medium, 26 * k, 0xF2FFFFFF));
         menuTitlePaint = Ui.text(Ui.semibold, 34 * k, L_INK);
         menuSubPaint = Ui.text(Ui.medium, 25 * k, L_DIM);
@@ -2664,7 +2669,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // Only read when it's shown: with the picks or the clock, Continue Watching costs nothing.
             final String mode = Prefs.topContent();
             final boolean allowed = WatchNext.allowed(c);
-            final List<WatchNext.Item> w = mode.equals(Prefs.TOP_CONTINUE) ? WatchNext.load(c) : new ArrayList<>();
+            final boolean needNews = mode.equals(Prefs.TOP_NEWS);
+            final List<News.Story> stories = needNews
+                    ? News.load(new File(c.getCacheDir(), "news.tsv"), System.currentTimeMillis()) : new ArrayList<>();
+            final List<WatchNext.Item> w = mode.equals(Prefs.TOP_CONTINUE) ? WatchNext.load(c)
+                    : mode.equals(Prefs.TOP_NEWS) ? newsItems(stories) : new ArrayList<>();
             handler.post(() -> {
                 // A provider/package refresh must not cancel a drag or undo a move that was just saved.
                 boolean keepOrder = reordering || pendingOrderSaves > 0 || orderAtLoad != orderRevision;
@@ -2678,6 +2687,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 else if (o != null) appsStale = true;   // All Apps is open: its list comes next time
             });
         });
+    }
+
+    /** The day's headlines as cards of the same row Continue Watching uses (the network read happens in reload's thread). */
+    private static List<WatchNext.Item> newsItems(List<News.Story> stories) {
+        List<WatchNext.Item> items = new ArrayList<>();
+        for (News.Story s : stories) {
+            WatchNext.Item it = new WatchNext.Item("news:" + s.source, null, null);
+            it.news = true;
+            it.title = s.title;
+            it.app = s.source;
+            it.intent = s.link;
+            items.add(it);
+        }
+        return items;
     }
 
     /** Apps installed, removed or updated (also while another app is open): the next reload reads them again. */
@@ -2943,7 +2966,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The Continue Watching card under a point, if any (only the ones on screen; `still` as in cardAt). */
     private int watchAt(float x, float y, boolean still) {
-        if (!continueMode()) return -1;
+        if (!rowMode()) return -1;
         for (int i = 0; i < watching.size(); i++) {
             watchRect(i, hitBox);
             if (hitBox.left > w || hitBox.right <= watchLeftEdge()) continue;
@@ -3657,7 +3680,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         for (int i = picksMode() ? 0 : 3; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(Recs.MAX_CARDS, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
-        if (continueMode()) for (int i = 0; i < watching.size(); i++) out.add(a11yId(Z_WATCH, i));
+        if (rowMode()) for (int i = 0; i < watching.size(); i++) out.add(a11yId(Z_WATCH, i));
         for (int i = shelfFirst; i < Math.min(shelf.size(), shelfFirst + shelfVisible); i++) out.add(a11yId(Z_SHELF, i));
         for (int i = 0; i < drawerItems.size(); i++) out.add(a11yId(Z_DRAWER, i));
         if (drawerOpen && Prefs.weather()) out.add(a11yId(WIDGETS, 0));
@@ -3785,7 +3808,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return !reordering && !menuOpen && !sheetOpen && shelf.size() > 1 && i < shelf.size()
                     && shelf.get(i).kind == HomeApps.APP && shelf.get(i).pkg != null;
         }
-        return group == Z_WATCH && !menuOpen && continueMode() && i < watching.size();
+        return group == Z_WATCH && !menuOpen && rowMode() && i < watching.size();
     }
 
     private int a11yFocused() {
@@ -4053,11 +4076,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The clock, the date and the weather: nothing at the top, or picks without a TMDB key. */
     private boolean clockMode() {
-        return !picksMode() && !continueMode();
+        return !picksMode() && !rowMode();
     }
 
     private boolean continueMode() {
         return topMode.equals(Prefs.TOP_CONTINUE);
+    }
+
+    /** The day's headlines, in the same scrolling row Continue Watching uses. */
+    private boolean newsMode() {
+        return topMode.equals(Prefs.TOP_NEWS);
+    }
+
+    /** The top row shows a list of cards (Continue Watching or the news), not the picks or the clock. */
+    private boolean rowMode() {
+        return continueMode() || newsMode();
     }
 
     /** What the top shows now (from reload, off the main thread) and, for Continue Watching, its list. */
@@ -4070,9 +4103,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean modeChanged = !mode.equals(topMode);
         boolean listChanged = !sameWatching(list, watching);
         // The permission (granted or taken back) and the first read change what an empty row says: redraw for those.
-        boolean textChanged = allowed != watchAllowed || !watchLoaded && mode.equals(Prefs.TOP_CONTINUE);
+        boolean row = mode.equals(Prefs.TOP_CONTINUE) || mode.equals(Prefs.TOP_NEWS);
+        boolean textChanged = allowed != watchAllowed || !watchLoaded && row;
         watchAllowed = allowed;
-        if (mode.equals(Prefs.TOP_CONTINUE)) watchLoaded = true;
+        if (row) watchLoaded = true;
         if (!modeChanged && !listChanged) {
             if (textChanged) heroDirty = true;
             return;
@@ -4141,7 +4175,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawWatchRow(Canvas c) {
         if (watching.isEmpty()) {
             if (!watchLoaded) return;   // not read yet: saying "nothing" now could be wrong
-            String text = watchAllowed ? Ui.tr("Nothing half-watched in your apps.")
+            String text = newsMode() ? Ui.tr("No news right now.")
+                    : watchAllowed ? Ui.tr("Nothing half-watched in your apps.")
                     : Ui.tr("Missing permission: pick Continue Watching again in Home Settings.");
             c.drawText(text, MARGIN * k, (L_CARDS_TOP + 60) * k, lCardMeta);
             return;
@@ -4201,13 +4236,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
         c.restore();
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
-        Bitmap img = watchArt.get(it.pictureUri, it.pictureKey, it.bannerKey, it.pkg);
-        if (img != null) {
-            roundImage(c, img, watchArt.shader(img), cell, r);
-        } else {
+        if (it.news) {
+            // A headline's card: the source's colour with its name, and the headline on the line below.
             fill.setShader(null);
-            fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
+            fill.setColor(blend(News.color(it.app), 0xFF000000, 0.18f + 0.22f * dark()));
             c.drawRoundRect(cell, r, r, fill);
+            newsPaint.setTextSize(42 * k * s);
+            newsPaint.setColor(0xF2FFFFFF);
+            c.drawText(it.app == null ? "" : it.app, cx, cy + 14 * k * s, newsPaint);
+        } else {
+            Bitmap img = watchArt.get(it.pictureUri, it.pictureKey, it.bannerKey, it.pkg);
+            if (img != null) {
+                roundImage(c, img, watchArt.shader(img), cell, r);
+            } else {
+                fill.setShader(null);
+                fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
+                c.drawRoundRect(cell, r, r, fill);
+            }
         }
         float progress = it.progress();
         if (progress >= 0) {
@@ -4250,6 +4295,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Resumes it where you left it (the app's own link); if that link can't be used, the app itself. */
     private void openWatching(WatchNext.Item it) {
+        if (it.news) {
+            openStory(it);
+            return;
+        }
         Intent link = it.intent == null ? null : linkIntent(it.intent, it.pkg);
         if (link != null && link.resolveActivity(activity.getPackageManager()) != null) {
             try {
@@ -4260,6 +4309,31 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         if (!openApp(it)) showToast(Ui.trf("Couldn't open {app}.", "app", appName(it)));
+    }
+
+    /** Opens a headline in whatever app handles a web address (a browser, or the source's app); many TVs have none. */
+    private void openStory(WatchNext.Item it) {
+        if (it.intent == null) {
+            showToast(Ui.tr("This TV has no app to open the headline."));
+            return;
+        }
+        Intent view = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.intent));
+        if (view.resolveActivity(activity.getPackageManager()) != null) {
+            try {
+                activity.startActivity(view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return;
+            } catch (ActivityNotFoundException | SecurityException e) {
+                AppLog.w("news link: " + e.getMessage());
+            }
+        }
+        // No browser (or it refused): the article in our own WebView.
+        try {
+            activity.startActivity(new Intent(activity, StoryActivity.class)
+                    .putExtra(StoryActivity.EXTRA_URL, it.intent));
+        } catch (RuntimeException e) {
+            AppLog.w("news story: " + e.getMessage());
+            showToast(Ui.tr("This TV has no app to open the headline."));
+        }
     }
 
     /**
@@ -4604,11 +4678,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0 || playingTab != null) drawQuotes(c);
             return;
         }
-        String hello = picksMode() ? Ui.tr("For You") : Ui.tr("Continue Watching");
+        String hello = picksMode() ? Ui.tr("For You") : newsMode() ? Ui.tr("News") : Ui.tr("Continue Watching");
         c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
         titleRight = MARGIN * k + lTitle.measureText(hello);
         if (!picksMode()) {
-            if (continueMode()) drawWatchRow(c);
+            if (rowMode()) drawWatchRow(c);
             if (HomeData.coinCount() > 0 || playingTab != null) drawQuotes(c);
             return;
         }
@@ -4847,7 +4921,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (dy >= 0) return false;
                 if (!picksMode()) {
                     // No tabs or picks: up goes to what you were watching, or to the corner buttons.
-                    if (continueMode() && !watching.isEmpty()) {
+                    if (rowMode() && !watching.isEmpty()) {
                         zone = Z_WATCH;
                     } else if (!lightButtons.isEmpty()) {
                         zone = Z_TOP;
@@ -4895,7 +4969,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_TOP:
                 if (dx != 0 && !picksMode() && topIndex + dx < 3) return true;   // no tabs to the left
                 if (dy > 0 && !picksMode()) {
-                    zone = continueMode() && !watching.isEmpty() ? Z_WATCH : Z_SHELF;
+                    zone = rowMode() && !watching.isEmpty() ? Z_WATCH : Z_SHELF;
                     break;
                 }
                 if (dx != 0) {

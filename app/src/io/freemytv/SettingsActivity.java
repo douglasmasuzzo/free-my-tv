@@ -1103,6 +1103,7 @@ public class SettingsActivity extends Activity {
             v[SAVER_ROW] = onOff(Prefs.saverWatch());
             String top = Prefs.topContent();
             v[TOP_ROW] = top.equals(Prefs.TOP_CONTINUE) ? Ui.tr("Continue Watching")
+                    : top.equals(Prefs.TOP_NEWS) ? Ui.tr("News")
                     : top.equals(Prefs.TOP_NONE) ? Ui.tr("Clock")
                     : Ui.tr("Picks");
             v[WATCH_ROW] = watchCount();

@@ -38,6 +38,7 @@ final class WatchNext {
         String app;                     // the app's name, for the card's details line
         long duration, position, engaged;
         String intent;
+        boolean news;                   // a headline from News, not an app's title (no picture, no progress)
         final Uri pictureUri;
         final String pictureKey, bannerKey;
         private final String picture;

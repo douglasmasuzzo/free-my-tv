@@ -162,6 +162,18 @@
             </intent-filter>
         </activity>
 
+        <!-- A news headline when no browser is installed: the article in a WebView of our own (HomeView.openStory). -->
+        <activity
+            android:name=".StoryActivity"
+            android:process=":home"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="io.freemytv.story"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@style/FreeMyTV.Home" />
+
         <!-- Fire TV: the same home screen opened as a regular app (no resumeWhilePausing, which leaves window focus on
              Amazon's paused launcher on Fire OS). -->
         <activity

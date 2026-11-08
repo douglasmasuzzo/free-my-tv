@@ -10,12 +10,14 @@ import android.bluetooth.BluetoothHeadset;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Matrix;
@@ -4318,7 +4320,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         Intent view = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.intent));
-        if (view.resolveActivity(activity.getPackageManager()) != null) {
+        // Google TV's browser stub resolves everywhere and closes at once, so ask for every handler and keep the
+        // first real browser (News.browser), fixing its component so the stub can't answer again.
+        List<ResolveInfo> found = activity.getPackageManager().queryIntentActivities(view, PackageManager.MATCH_DEFAULT_ONLY);
+        String[] handlers = new String[found.size()];
+        for (int i = 0; i < found.size(); i++) handlers[i] = found.get(i).activityInfo == null ? null : found.get(i).activityInfo.packageName;
+        String browser = News.browser(handlers);
+        if (browser != null) {
+            for (ResolveInfo ri : found) {
+                if (ri.activityInfo != null && browser.equals(ri.activityInfo.packageName)) {
+                    view.setComponent(new ComponentName(ri.activityInfo.packageName, ri.activityInfo.name));
+                    break;
+                }
+            }
             try {
                 activity.startActivity(view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 return;

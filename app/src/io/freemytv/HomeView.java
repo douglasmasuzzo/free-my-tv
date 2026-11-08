@@ -201,9 +201,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int tab, topIndex, cardIndex;
     private int widgetIndex;    // with TalkBack on, the drawer's weather (0) or quotes (1) card can take the focus
     private List<Recs.Pick> cards = new ArrayList<>();
-    // The three tabs, then the round buttons at the top right (up to HomeApps.MAX_TOP).
-    private final Spring[] topFocus = new Spring[3 + HomeApps.MAX_TOP];
-    private final RectF[] topRects = new RectF[3 + HomeApps.MAX_TOP];
+    // The three tabs, the round buttons at the top right (up to HomeApps.MAX_TOP), then the bottom row's page slot.
+    private final Spring[] topFocus = new Spring[4 + HomeApps.MAX_TOP];
+    private final RectF[] topRects = new RectF[4 + HomeApps.MAX_TOP];
     private final Spring[] cardFocus = new Spring[Recs.MAX_CARDS];
     /** How open (wide) each card is: 1 for the one at cardIndex, 0 for the others; the widths always add up to the same. */
     private final Spring[] cardOpen = new Spring[Recs.MAX_CARDS];
@@ -835,7 +835,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (reorderTop) cancelReorder(true);
         lightButtons.clear();
         lightButtons.addAll(list);
-        if (zone == Z_TOP && topIndex >= 3 + lightButtons.size()) {
+        if (zone == Z_TOP && topIndex >= 3 + lightButtons.size() + (panelOn() ? 1 : 0)) {
             topIndex = 2 + lightButtons.size();
             if (topIndex < 3 && !picksOn()) zone = Z_SHELF;   // without the picks the tabs can't hold focus
             else if (topIndex < 3) selectTab(topIndex);
@@ -843,6 +843,36 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         layoutLight();
         statusDirty = true;
+    }
+
+    /** Where the bottom row sits among the top row's focus targets: after the three tabs and the corner buttons. */
+    private int panelIndex() {
+        return 3 + lightButtons.size();
+    }
+
+    /** The bottom row has a page to show: what an app is playing, a headline, or the quotes. */
+    private boolean panelOn() {
+        return playingTab != null || (Prefs.techNews() && (!techNews.isEmpty() || HomeData.coinCount() > 0));
+    }
+
+    /** The page the row draws: the one remembered, or the other when that one has nothing to show. */
+    private String panelPage() {
+        return News.page(Prefs.panel(), Prefs.techNews() && !techNews.isEmpty(), HomeData.coinCount() > 0);
+    }
+
+    /** What TalkBack says for the row: its page, and where that page sits among the two. */
+    private String panelLabel() {
+        boolean quotes = News.PAGE_QUOTES.equals(panelPage());
+        return (quotes ? Ui.tr("Crypto") : Ui.tr("Technology")) + ", "
+                + Ui.trf("{i} of {n}", "i", quotes ? 2 : 1, "n", 2);
+    }
+
+    /** The row's other page (left/right, or OK while the row has focus), remembered for the next time. */
+    private void setPanel(String page) {
+        if (Prefs.panel().equals(page)) return;
+        Prefs.setPanel(page);
+        heroDirty = true;
+        wake();
     }
 
     /** The tab names, made again only when the language changes (they are drawn on every frame). */
@@ -1747,10 +1777,44 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    /** The quotes row's text and sizes, for one set of coins, prices and text size. */
+    private final class Quotes {
+        final int[] coins;
+        final double[] prices;
+        final float size, cap, halfCap;
+        final String[] values;
+        final float[] glyphs, widths;
+
+        Quotes(int[] coins, double[] all, Paint text) {
+            this.coins = coins;
+            size = text.getTextSize();
+            cap = Ui.cap(text);
+            halfCap = Ui.halfCap(text);
+            int n = coins.length;
+            prices = new double[n];
+            values = new String[n];
+            glyphs = new float[n];
+            widths = new float[n];
+            for (int i = 0; i < n; i++) {
+                prices[i] = all[coins[i]];
+                values[i] = HomeData.compact(prices[i]);
+                glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
+                widths[i] = text.measureText(values[i]);
+            }
+        }
+
+        boolean matches(int[] now, double[] all, float textSize) {
+            if (now != coins || textSize != size) return false;
+            for (int i = 0; i < coins.length; i++) if (Double.compare(all[coins[i]], prices[i]) != 0) return false;
+            return true;
+        }
+    }
+
     private Ticker ticker;
+    private Quotes quotes;
     // What's playing, cut to fit the tab row and the clock's row: once per title, never while drawing.
     private String playingTab, playingClock;
-    private float playingTabWidth, playingTabCap, playingClockCap;
+    private float playingTabWidth, playingTabCap, playingClockCap, playingClockWidth;
     private final RectF barRect = new RectF();
     // The bars bounce for a few seconds when the title changes, then stand still: bouncing all along redrew the top
     // layer 10 times a second (~8% of a core on a Skyworth's Cortex-A55), the still screen nothing.
@@ -1811,46 +1875,118 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         playingClockCap = Ui.cap(lClockQuote);
         fitPaint.set(lClockQuote);
         playingClock = TextUtils.ellipsize(now, fitPaint, (CONTENT_R - MARGIN - 60) * k, TextUtils.TruncateAt.END).toString();
+        playingClockWidth = lClockQuote.measureText(playingClock);
     }
 
-    /** The technology headline, at the right end of the tab bar (or under the weather, in clock mode). */
-    private void drawTicker(Canvas c) {
+    /**
+     * The bottom row: what an app is playing, or its page - the newest technology headline, or the quotes - at the
+     * right of its line (under the weather in clock mode). The row is a focus target too (topRects[panelIndex()]): a
+     * white pill wraps the line while it has focus, and left/right then move between the two pages.
+     */
+    private void drawRow(Canvas c) {
         boolean clock = clockMode();
         // At the right margin, under the round buttons: the shelf's glass is narrower and centred with few apps.
         float right = CONTENT_R * k;
         applyTone();
         Paint text = clock ? lClockQuote : lQuote;
-        // The corner buttons' names appear in this row: the ticker fades out while one of them has focus.
+        // The corner buttons' names appear in this row: the row fades out while one of them has focus.
         float fade = 1;
         for (int i = 3; i < 3 + lightButtons.size() && !clock; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
         if (fade <= 0.01f) return;
         int textColor = text.getColor();
-        text.setColor(Ui.alpha(textColor, fade));
-        // What an app is playing takes the ticker's place while it plays.
+        // On the white pill the line reads dark, whatever the mood made it (as the focused tab's does).
+        float focus = Ui.clamp(topFocus[panelIndex()].value);
+        text.setColor(Ui.alpha(blend(textColor, L_INK, focus), fade));
+        // What an app is playing takes the row's page while it plays.
         String line = clock ? playingClock : playingTab;
         if (line != null) {
             float cap = clock ? playingClockCap : playingTabCap, gap = cap * 0.6f;
             float base = clock ? L_QUOTES_BASE * k : (L_TABBAR_TOP + L_TABBAR_H / 2) * k + cap / 2;
             float x = clock ? MARGIN * k : right - playingTabWidth - gap - NowPlaying.barsWidth(cap);
+            float w = clock ? playingClockWidth : playingTabWidth;
+            panelLine(c, x - 12 * k, x + NowPlaying.barsWidth(cap) + gap + w + 12 * k, base, cap, focus);
             NowPlaying.drawBars(c, x, base, cap, text, SystemClock.uptimeMillis() < barsUntil, barRect);
             c.drawText(line, x + NowPlaying.barsWidth(cap) + gap, base, text);
             text.setColor(textColor);
             return;
         }
-        if (!Prefs.techNews() || techNews.isEmpty()) {
+        // The page asked for, or the other when that one has nothing to show: the row never blanks, and the stored
+        // preference is untouched, so a page that is empty for a while comes back by itself.
+        String page = panelPage();
+        if (page == null) {
             text.setColor(textColor);
             return;
         }
-        // One headline at a time, rotating with the 15 s tick. Measured once per headline: this row is redrawn on every
-        // frame of the cards' focus animation.
-        News.Story story = techNews.get(Math.floorMod(techIndex, techNews.size()));
-        float maxWidth = clock ? (CONTENT_R - MARGIN - 60) * k : Math.min(760 * k, right - MARGIN * k);
-        Ticker t = ticker;
-        if (t == null || !t.matches(story, text.getTextSize(), maxWidth)) t = ticker = new Ticker(story, text, maxWidth);
-        float base = clock ? L_QUOTES_BASE * k : (L_TABBAR_TOP + L_TABBAR_H / 2) * k + t.halfCap;
-        float x = clock ? MARGIN * k : right - t.width;
-        c.drawText(t.text, x, base, text);
+        if (News.PAGE_TECH.equals(page)) {
+            // One headline at a time, rotating with the 15 s tick. Measured once per headline: this row is redrawn on
+            // every frame of the cards' focus animation.
+            News.Story story = techNews.get(Math.floorMod(techIndex, techNews.size()));
+            float maxWidth = clock ? (CONTENT_R - MARGIN - 60) * k : Math.min(760 * k, right - MARGIN * k);
+            Ticker t = ticker;
+            if (t == null || !t.matches(story, text.getTextSize(), maxWidth)) t = ticker = new Ticker(story, text, maxWidth);
+            float base = clock ? L_QUOTES_BASE * k : (L_TABBAR_TOP + L_TABBAR_H / 2) * k + t.halfCap;
+            float x = clock ? MARGIN * k : right - t.width;
+            panelLine(c, x - 12 * k, x + t.width + 12 * k, base, t.cap, focus);
+            c.drawText(t.text, x, base, text);
+        } else {
+            drawQuotes(c, text, right, clock, textColor, fade, focus);
+        }
         text.setColor(textColor);
+    }
+
+    /** The quotes: one line of coins and prices (the row's second page), measured once per set of prices. */
+    private void drawQuotes(Canvas c, Paint text, float right, boolean clock, int textColor, float fade, float focus) {
+        // One read of the list, so n always matches the coins drawn below.
+        int[] coins = HomeData.active();
+        int n = coins.length;
+        if (n == 0) return;
+        Quotes q = quotes;
+        if (q == null || !q.matches(coins, data.prices, text.getTextSize())) q = quotes = new Quotes(coins, data.prices, text);
+        float base = clock ? L_QUOTES_BASE * k : (L_TABBAR_TOP + L_TABBAR_H / 2) * k + q.halfCap;
+        float cap = q.cap, gap = (clock ? 8 : 6) * k, spacing = (clock ? 32 : 24) * k;
+        float total = spacing * (n - 1);
+        for (int i = 0; i < n; i++) total += q.glyphs[i] + gap + q.widths[i];
+        float x = clock ? MARGIN * k : right - total;
+        // The "5 min ago" note hangs off the line's other end, inside the pill (it changes colour with the line).
+        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+        float lineL = x - 12 * k, lineR = x + total + 12 * k;
+        if (!stale.isEmpty()) {
+            if (clock) lineR += 24 * k + staleQuote.measureText(stale) + 12 * k;
+            else lineL -= 24 * k + staleQuote.measureText(stale) + 12 * k;
+        }
+        panelLine(c, lineL, lineR, base, cap, focus);
+        int coinBase = clock ? textColor : tone(0xB38E8E93, 0x8CFFFFFF);
+        int coinColor = Ui.alpha(blend(coinBase, L_INK, focus), fade);
+        for (int i = 0; i < n; i++) {
+            Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], x + q.glyphs[i] / 2, base - cap / 2, cap, coinColor);
+            x += q.glyphs[i] + gap;
+            c.drawText(q.values[i], x, base, text);
+            x += q.widths[i] + spacing;
+        }
+        if (stale.isEmpty()) return;
+        staleQuote.setColor(blend(staleQuote.getColor(), L_INK, focus));
+        if (clock) c.drawText(stale, x - spacing + 24 * k + staleQuote.measureText(stale), base, staleQuote);
+        else c.drawText(stale, right - total - 24 * k, base, staleQuote);
+    }
+
+    /**
+     * The bottom row as a focus target: the line's rect (so the pointer and TalkBack find the row) and, while it has
+     * focus, the white pill the line sits on - the same one the focused tab and the corner buttons get.
+     */
+    private void panelLine(Canvas c, float left, float lineRight, float base, float cap, float focus) {
+        RectF r = topRects[panelIndex()];
+        float pad = 14 * k;
+        r.set(left, base - cap - pad, lineRight, base + pad);
+        snap(r);
+        if (focus <= 0.01f) return;
+        float rr = r.height() / 2;
+        tmp.set(r);
+        tmp.offset(0, 8 * k * focus);
+        shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
+        shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
+        fill.setShader(null);
+        fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
+        c.drawRoundRect(r, rr, rr, fill);
     }
 
     private void drawTiles(Canvas c) {
@@ -3002,7 +3138,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private int topAt(float x, float y) {
         int hit = hit(topRects, x, y);
-        return hit >= 3 + lightButtons.size() || hit >= 0 && hit < 3 && !picksMode() ? -1 : hit;
+        int last = 3 + lightButtons.size() + (panelOn() ? 1 : 0);
+        return hit >= last || hit >= 0 && hit < 3 && !picksMode() ? -1 : hit;
     }
 
     /**
@@ -3360,6 +3497,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_TOP) {
             if (topIndex < 3) {
                 selectTab(topIndex);
+                return;
+            }
+            if (topIndex == panelIndex()) {   // OK on the row shows its other page
+                setPanel(News.step(Prefs.panel(), 1));
                 return;
             }
             it = lightButtons.get(topIndex - 3);
@@ -3822,7 +3963,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
             return;
         }
-        for (int i = picksMode() ? 0 : 3; i < 3 + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
+        int topLast = 3 + lightButtons.size() + (panelOn() ? 1 : 0);
+        for (int i = picksMode() ? 0 : 3; i < topLast; i++) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(Recs.MAX_CARDS, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
         if (rowMode()) for (int i = 0; i < watching.size(); i++) out.add(a11yId(Z_WATCH, i));
         for (int i = shelfFirst; i < Math.min(shelf.size(), shelfFirst + shelfVisible); i++) out.add(a11yId(Z_SHELF, i));
@@ -3849,6 +3991,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     return Ui.trf("Moving {app}, position {n} of {total}",
                             "app", label(lightButtons, i - 3), "n", i - 2, "total", lightButtons.size());
                 }
+                if (i == panelIndex()) return panelLabel();
                 if (i >= 3) return label(lightButtons, i - 3);
                 return Ui.trf("{name}, tab {i} of {n}", "name", tabs()[i], "i", i + 1, "n", 3);
             case Z_CARDS: return i < cards.size() ? pickText(cards.get(i)) : "";
@@ -3899,9 +4042,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             }
             case Z_TOP:
-                if (i >= 3 + lightButtons.size()) return false;
+                if (i >= 3 + lightButtons.size() + (panelOn() ? 1 : 0)) return false;
                 a11yRect.set(topRects[i]);
-                dy = (i < 3 ? heroLayer : status).getTranslationY();
+                // The row is drawn with the tabs (hero layer); the corner buttons live in the status one.
+                dy = (i < 3 || i == panelIndex() ? heroLayer : status).getTranslationY();
                 break;
             case Z_CARDS:
                 if (i >= Math.min(Recs.MAX_CARDS, cards.size())) return false;
@@ -4034,7 +4178,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 widgetIndex = i;
                 break;
             case Z_TOP:
-                if (i >= 3 + lightButtons.size() || (i < 3 && !picksMode())) return;
+                if (i >= 3 + lightButtons.size() + (panelOn() ? 1 : 0) || (i < 3 && !picksMode())) return;
                 if (drawerOpen) closeDrawer();
                 topIndex = i;
                 if (i < 3) selectTab(i);
@@ -4141,6 +4285,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + L_BUTTON_GAP * k;
         }
+        // The bottom row's slot, after the buttons: its whole line (drawRow narrows it to what the line draws).
+        float rowTop = (clockMode() ? L_QUOTES_BASE - 44 : L_TABBAR_TOP) * k;
+        float rowBottom = (clockMode() ? L_QUOTES_BASE + 14 : L_TABBAR_TOP + L_TABBAR_H) * k;
+        topRects[panelIndex()].set(MARGIN * k, rowTop, CONTENT_R * k, rowBottom);
+        snap(topRects[panelIndex()]);
         float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, left = MARGIN * k, tall = L_TALL_W * k;
         for (HomeApps.Item it : lightButtons) {
             Symbols.warm(getContext(), it.symbol, 27 * k);
@@ -4833,7 +4982,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (clockMode()) {
             titleRight = 0;
             drawClock(c);
-            if (Prefs.techNews() && !techNews.isEmpty() || playingTab != null) drawTicker(c);
+            if (panelOn()) drawRow(c);
             return;
         }
         String hello = picksMode() ? Ui.tr("For You") : newsMode() ? Ui.tr("News") : Ui.tr("Continue Watching");
@@ -4841,7 +4990,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         titleRight = MARGIN * k + lTitle.measureText(hello);
         if (!picksMode()) {
             if (rowMode()) drawWatchRow(c);
-            if (Prefs.techNews() && !techNews.isEmpty() || playingTab != null) drawTicker(c);
+            if (panelOn()) drawRow(c);
             return;
         }
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
@@ -4874,7 +5023,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < slots; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
         for (int i = 0; i < slots; i++) if (i != top) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
-        if (Prefs.techNews() && !techNews.isEmpty() || playingTab != null) drawTicker(c);
+        if (panelOn()) drawRow(c);
     }
 
     private boolean picksOn() {
@@ -5127,13 +5276,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
                 break;
             case Z_TOP:
+                if (dx != 0 && topIndex == panelIndex() && panelOn()) {   // on the row: left/right moves between pages
+                    setPanel(News.step(Prefs.panel(), dx));
+                    return true;
+                }
                 if (dx != 0 && !picksMode() && topIndex + dx < 3) return true;   // no tabs to the left
                 if (dy > 0 && !picksMode()) {
                     zone = rowMode() && !watching.isEmpty() ? Z_WATCH : Z_SHELF;
                     break;
                 }
                 if (dx != 0) {
-                    int next = Math.max(picksMode() ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
+                    int last = 2 + lightButtons.size() + (panelOn() ? 1 : 0);
+                    int next = Math.max(picksMode() ? 0 : 3, Math.min(last, topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
@@ -5144,6 +5298,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         zone = Z_CARDS;
                         cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
                     }
+                } else if (topIndex == panelIndex() && !lightButtons.isEmpty()) {
+                    topIndex = 2 + lightButtons.size();   // up from the row reaches the corner buttons
                 } else if (topIndex < 3 && !lightButtons.isEmpty()) {
                     topIndex = 3;   // up from the tabs reaches the corner buttons without walking the row
                 } else {

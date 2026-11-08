@@ -98,6 +98,27 @@ public final class NewsTest {
         // The cache is fresh while the newest story is younger than CACHE_MS (the fetch path needs no network here).
         check(News.CACHE_MS == 20 * 60_000L, "cache window");
 
+        // The bottom row's two pages (R3): technology first, the quotes second, left/right walking between them.
+        check(News.PAGES.length == 2 && News.PAGE_TECH.equals(News.PAGES[0]) && News.PAGE_QUOTES.equals(News.PAGES[1]),
+                "technology first, the quotes second");
+        check(News.page("").equals(News.PAGE_TECH), "an empty stored page is technology");
+        check(News.page(News.PAGE_QUOTES).equals(News.PAGE_QUOTES), "the quotes page is kept");
+        check(News.page("sepia").equals(News.PAGE_TECH), "an unknown page is technology");
+        check(News.page(News.PAGE_TECH, true, true).equals(News.PAGE_TECH), "technology when both pages are ready");
+        check(News.page(News.PAGE_QUOTES, true, true).equals(News.PAGE_QUOTES), "the quotes when they are asked for");
+        check(News.page(News.PAGE_TECH, false, true).equals(News.PAGE_QUOTES), "no technology: the quotes' page");
+        check(News.page(News.PAGE_QUOTES, true, false).equals(News.PAGE_TECH), "no quotes: technology's page");
+        check(News.page(News.PAGE_TECH, false, false) == null && News.page(News.PAGE_QUOTES, false, false) == null,
+                "nothing ready: no page at all");
+        check(News.page(News.PAGE_TECH, false, true).equals(News.PAGE_QUOTES)
+                && News.page(News.PAGE_TECH, true, true).equals(News.PAGE_TECH),
+                "the fallback doesn't change the stored preference");
+        check(News.step(News.PAGE_TECH, 1).equals(News.PAGE_QUOTES), "right from technology");
+        check(News.step(News.PAGE_QUOTES, -1).equals(News.PAGE_TECH), "left from the quotes");
+        check(News.step(News.PAGE_TECH, -1).equals(News.PAGE_QUOTES), "left from technology wraps to the quotes");
+        check(News.step(News.PAGE_QUOTES, 1).equals(News.PAGE_TECH), "right from the quotes wraps to technology");
+        check(News.step(News.PAGE_TECH, 0).equals(News.PAGE_TECH), "no direction: no change");
+
         System.out.println("News: " + assertions + " assertions passed");
     }
 }

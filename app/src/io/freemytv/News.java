@@ -84,6 +84,30 @@ final class News {
     /** Topics in the order the row rotates them: one from each before a second from any. */
     static final String[] TOPICS = {COTIDIANO, POLITICA, ECONOMIA, TECNOLOGIA};
 
+    /** The bottom row's two pages: technology first, the quotes second (left/right walk them in this order). */
+    static final String PAGE_TECH = "tech", PAGE_QUOTES = "quotes";
+    static final String[] PAGES = {PAGE_TECH, PAGE_QUOTES};
+
+    /** A stored page made valid: anything that isn't the quotes is technology (the row's default page). */
+    static String page(String stored) {
+        return PAGE_QUOTES.equals(stored) ? PAGE_QUOTES : PAGE_TECH;
+    }
+
+    /**
+     * The page to draw: the one asked for; the other when that one has nothing to show; null when neither has (the
+     * row then only draws what an app is playing). The stored preference never changes here, so a page that is
+     * empty for a while comes back by itself.
+     */
+    static String page(String wanted, boolean techReady, boolean quotesReady) {
+        if (techReady && quotesReady) return page(wanted);
+        return techReady ? PAGE_TECH : quotesReady ? PAGE_QUOTES : null;
+    }
+
+    /** The page left/right lands on: a carousel of two, so every press shows the other one. */
+    static String step(String page, int dir) {
+        return PAGES[Math.floorMod((PAGE_QUOTES.equals(page) ? 1 : 0) + dir, PAGES.length)];
+    }
+
     static final long CACHE_MS = 20 * 60_000L;   // a feed's headlines change by the minute; 20 is plenty for a TV
 
     /** The headlines to show: the cache while it is fresh, a fresh read otherwise (falling back to a stale cache). */

@@ -351,8 +351,17 @@ final class Prefs {
     static boolean techNews() { return sp().getBoolean("quotes", true); }
     static void setTechNews(boolean on) { put("quotes", on); }
 
-    /** The old crypto quotes, off and with no UI: kept only so an old setting can't turn its network reads back on. */
-    static boolean crypto() { return sp().getBoolean("crypto", false); }
+    /**
+     * The crypto prices: the bottom row's second page (technology shares the row with the quotes now), so they are
+     * read while the row is on. The old "crypto" key is gone: what says the row is on says the prices are wanted.
+     */
+    static boolean crypto() { return techNews(); }
+
+    /** Which page the bottom row shows: technology (the default) or the quotes, remembered when you move between them. */
+    static String panel() { return News.page(sp().getString("panel", "")); }
+
+    /** Written without bumping `version`: a new version makes the home screen start over and fetch everything again. */
+    static void setPanel(String page) { sp().edit().putString("panel", page).apply(); }
 
     /** Your photos (Photos, sent from a computer) on the screensaver and behind the home screen, once imported. */
     static boolean photos() { return sp().getBoolean("photos", true); }

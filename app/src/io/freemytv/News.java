@@ -110,6 +110,15 @@ final class News {
 
     static final long CACHE_MS = 20 * 60_000L;   // a feed's headlines change by the minute; 20 is plenty for a TV
 
+    /** Google TV's browser stub resolves and starts even with no browser, then closes at once: not a usable handler. */
+    static final String BROWSER_STUB = "com.google.android.tv.frameworkpackagestubs";
+
+    /** The handler to open a headline with: the first that is a real browser; null when the TV has none. */
+    static String browser(String... handlers) {
+        for (String h : handlers) if (h != null && !h.isEmpty() && !h.equals(BROWSER_STUB)) return h;
+        return null;
+    }
+
     /** The headlines to show: the cache while it is fresh, a fresh read otherwise (falling back to a stale cache). */
     static List<Story> load(File cache, long now) {
         List<Story> saved = readCache(cache);

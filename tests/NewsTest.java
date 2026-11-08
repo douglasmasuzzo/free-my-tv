@@ -98,6 +98,14 @@ public final class NewsTest {
         // The cache is fresh while the newest story is younger than CACHE_MS (the fetch path needs no network here).
         check(News.CACHE_MS == 20 * 60_000L, "cache window");
 
+        // Opening a headline: Google TV's stub resolves everywhere and opens nothing, so it never counts as a browser.
+        check(News.browser(News.BROWSER_STUB) == null, "the stub is no browser");
+        check(News.browser(null, "", News.BROWSER_STUB) == null, "nothing usable");
+        check(News.browser() == null, "no handlers at all");
+        check("com.android.chrome".equals(News.browser("com.android.chrome")), "a real browser is kept");
+        check("com.android.chrome".equals(News.browser(News.BROWSER_STUB, "com.android.chrome")),
+                "the stub is skipped when a browser is there");
+
         // The bottom row's two pages (R3): technology first, the quotes second, left/right walking between them.
         check(News.PAGES.length == 2 && News.PAGE_TECH.equals(News.PAGES[0]) && News.PAGE_QUOTES.equals(News.PAGES[1]),
                 "technology first, the quotes second");
